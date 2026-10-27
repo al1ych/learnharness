@@ -808,8 +808,9 @@ function extractTools(context) {
 	return [...byName.values()];
 }
 
-function convertMessagesToContents(context) {
+function convertMessagesToContents(context, model) {
 	const contents = [];
+	const isClaudeModel = Boolean(model?.id?.startsWith("claude-"));
 	const pushTurn = (role, parts) => {
 		if (!parts || parts.length === 0) return;
 		const last = contents[contents.length - 1];
@@ -845,9 +846,13 @@ function convertMessagesToContents(context) {
 			pushTurn("user", parts);
 		} else if (msg.role === "assistant") {
 			if (msg.stopReason === "error" || msg.stopReason === "aborted") continue;
+			const isSameModel = (!msg.provider || !model?.provider || msg.provider === model.provider) &&
+				(!msg.model || !model?.id || msg.model === model.id);
 			const parts = [];
 			for (const block of Array.isArray(msg.content) ? msg.content : []) {
 				if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) {
+					if (!isSameModel) continue;
+					if (isClaudeModel && !block.thinkingSignature) continue;
 					parts.push({
 						thought: true,
 						text: block.thinking,
@@ -856,7 +861,7 @@ function convertMessagesToContents(context) {
 				} else if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
 					parts.push({
 						text: block.text,
-						...(block.textSignature ? { thoughtSignature: block.textSignature } : {}),
+						...(isSameModel && block.textSignature ? { thoughtSignature: block.textSignature } : {}),
 					});
 				} else if (block?.type === "toolCall" && typeof block.name === "string") {
 					parts.push({
@@ -865,7 +870,7 @@ function convertMessagesToContents(context) {
 							args: block.arguments && typeof block.arguments === "object" ? block.arguments : {},
 							...(block.id ? { id: String(block.id) } : {}),
 						},
-						...(block.thoughtSignature ? { thoughtSignature: block.thoughtSignature } : {}),
+						...(isSameModel && block.thoughtSignature ? { thoughtSignature: block.thoughtSignature } : {}),
 					});
 				}
 			}
@@ -913,9 +918,8 @@ function buildAntigravityPayload(model, context, projectId, options, runtimeMode
 	const systemParts = systemPrompt
 		? [{ text: systemPrompt }]
 		: [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }];
-	const contents = convertMessagesToContents(context);
+	const contents = convertMessagesToContents(context, model);
 	const declaredTools = extractTools(context);
-	const isClaudeOrGpt = model.id.startsWith("claude-") || model.id.startsWith("gpt-oss-");
 	const thinkingConfig = buildThinkingConfig(runtimeModel, options?.reasoning);
 
 	const request = {
@@ -937,9 +941,7 @@ function buildAntigravityPayload(model, context, projectId, options, runtimeMode
 				functionDeclarations: declaredTools.map((tool) => ({
 					name: tool.name,
 					description: tool.description || "",
-					...(isClaudeOrGpt
-						? { parameters: tool.parameters || { type: "object", properties: {} } }
-						: { parametersJsonSchema: tool.parameters || { type: "object", properties: {} } }),
+					parametersJsonSchema: tool.parameters || { type: "object", properties: {} },
 				})),
 			},
 		];
@@ -1020,7 +1022,16 @@ async function parseAntigravitySSE(response, stream, output, model) {
 		const responseData = chunk.response || chunk;
 		const candidate = responseData.candidates?.[0];
 		for (const part of candidate?.content?.parts || []) {
+			if (part.thoughtSignature && !part.functionCall && (!part.text || part.thought === true) && currentBlock?.type === "thinking") {
+				sawContentOrFinish = true;
+				currentBlock.thinkingSignature = part.thoughtSignature;
+				if (!part.text) continue;
+			}
 			if (typeof part.text === "string") {
+				if (part.text === "" && !part.thought && !part.thoughtSignature) {
+					sawContentOrFinish = true;
+					continue;
+				}
 				sawContentOrFinish = true;
 				const isThinking = part.thought === true;
 				const nextType = isThinking ? "thinking" : "text";

@@ -63,8 +63,8 @@ export function piModels() {
 	if (!collection) {
 		collection = createModels({ identity: APP_IDENTITY });
 		for (const provider of builtinProviders()) collection.setProvider(provider);
-		collection.setProvider(antigravityProvider());
 	}
+	collection.setProvider(antigravityProvider());
 	return collection;
 }
 

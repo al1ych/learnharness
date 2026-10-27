@@ -18,7 +18,7 @@ export { webSubscriptionsEnabled } from "../agent/subscription-runtime.ts";
 interface BrowserAction { target: string; origin: string; scope: string; expires: number; current(): Promise<boolean> }
 const KEY = Symbol.for("lh.webSubscriptions");
 const BRIDGE_KEY = Symbol.for("lh.subscriptions.bridge");
-const CATALOG_VERSION = 4;
+const CATALOG_VERSION = 5;
 interface Registry {
 	owner?: ReturnType<typeof createWebSubscriptionOwner>;
 	version?: number;
